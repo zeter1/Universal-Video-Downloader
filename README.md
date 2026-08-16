@@ -88,6 +88,10 @@ The diagnostic format can be checked with:
 py problem_log_validator.py
 ```
 
+## Verification
+
+The repository includes GitHub Actions syntax checks for the main application and diagnostic validator. These checks are intentionally lightweight and do not perform live downloads, connect to browser cookies, start a VPN/proxy or invoke real FFmpeg media jobs.
+
 ## Responsible use
 
 Use this application only to download content that you are authorized to access and in accordance with the source website's terms and applicable law. The project does not provide DRM circumvention.
@@ -95,3 +99,7 @@ Use this application only to download content that you are authorized to access 
 ## Notes
 
 Online video platforms change frequently, so keeping `yt-dlp` up to date is important. Some sites may also require browser cookies, a working VPN/proxy route, or an external JavaScript runtime depending on the site's current behavior.
+
+## License
+
+No open-source license is currently granted. The source code is published for portfolio and code-review purposes.
