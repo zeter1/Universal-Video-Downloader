@@ -1,0 +1,66 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE / editor
+.vscode/
+.idea/
+
+# Build artifacts
+build/
+dist/
+*.spec
+*.exe
+
+# Windows
+Thumbs.db
+Desktop.ini
+
+# Application runtime data
+Настройки/
+Логи скачивания/
+Логи проблем/
+История ссылок/
+Ссылки на скачивания/
+Обработать вручную/
+
+# Legacy runtime folders handled by application migration
+Settings/
+Log_download/
+History_Links/
+Failed_Downloads/
+Неудачные загрузки/
+Не конвертировалось/
+Проблемно скачиваемые видео/
+Problem_Logs/
+
+# Downloaded/generated media and temporary files
+*.part
+*.ytdl
+*.tmp
+*.temp
+*.log
+*.mp4
+*.webm
+*.mkv
+*.m4v
+*.mov
+*.mp3
+*.m4a
+*.wav
+*.aac
+*.opus
+
+# Optional local tool binaries
+ffmpeg.exe
+ffprobe.exe
+yt-dlp.exe
+aria2c.exe
