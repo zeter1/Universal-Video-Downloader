@@ -2,7 +2,7 @@
 
 Windows desktop GUI for downloading and processing online video with **yt-dlp**, **FFmpeg/FFprobe**, VPN/proxy-aware retry strategies and recovery-oriented diagnostics.
 
-Current application version in the source: **5.8 VPN SMART**.
+Current application version in the source: **5.9 VPN SMART**.
 
 ## Features
 

@@ -27,7 +27,13 @@ Desktop.ini
 # Application runtime data
 Настройки/
 Логи скачивания/
-Логи проблем/
+# Keep real problem logs private, but version the validator contract and
+# synthetic fixtures used by the automated tests.
+Логи проблем/*
+!Логи проблем/README_FOR_CODEX.md
+!Логи проблем/log_schema.json
+!Логи проблем/Примеры/
+!Логи проблем/Примеры/**
 История ссылок/
 Ссылки на скачивания/
 Обработать вручную/

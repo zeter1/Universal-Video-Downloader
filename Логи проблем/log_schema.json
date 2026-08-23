@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "skachat_video_online.problem_event.schema.v4",
+  "title": "Skachat_video_online Codex problem event",
+  "x-supported-source-schema-versions": [
+    3,
+    4
+  ],
+  "x-legacy-normalizer": "problem_log_validator.normalize_event_record",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "event_id",
+    "timestamp",
+    "level",
+    "operation",
+    "message",
+    "error_signature",
+    "problem_log_session_id"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 4
+    },
+    "event_id": {
+      "type": "string"
+    },
+    "parent_event_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "task_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "attempt_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "command_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "incident_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "timestamp": {
+      "type": "string"
+    },
+    "level": {
+      "enum": [
+        "INFO",
+        "WARNING",
+        "ERROR",
+        "CRITICAL"
+      ]
+    },
+    "operation": {
+      "type": "string"
+    },
+    "message": {
+      "type": "string"
+    },
+    "error_signature": {
+      "type": "string"
+    },
+    "error_code": {
+      "type": "string"
+    },
+    "problem_fingerprint": {
+      "type": "string"
+    },
+    "resolved": {
+      "type": "boolean"
+    },
+    "attachment": {
+      "type": [
+        "object",
+        "null"
+      ]
+    }
+  },
+  "additionalProperties": true
+}

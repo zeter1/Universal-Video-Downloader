@@ -1,0 +1,1 @@
+{"schema_version":3,"compact":true,"sequence":1,"problem_log_session_id":"example-legacy","timestamp":"2025-12-31T23:59:59","timestamp_unix":1767225599.0,"level":"WARNING","operation":"yt_dlp_download_attempt","message":"Старая запись схемы 3","problem_fingerprint":"legacy-example-fingerprint","context":{"attempt":1},"resolved":false}

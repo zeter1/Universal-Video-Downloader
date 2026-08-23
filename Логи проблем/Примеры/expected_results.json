@@ -1,0 +1,43 @@
+{
+  "schema_version": 4,
+  "validator_status": "passed",
+  "scenarios": {
+    "success": {
+      "event_count": 1,
+      "incident_count": 0,
+      "legacy_record_count": 0
+    },
+    "recovered": {
+      "event_count": 2,
+      "incident_count": 2,
+      "legacy_record_count": 0,
+      "incident_statuses": [
+        "detected",
+        "recovered"
+      ]
+    },
+    "failed": {
+      "event_count": 1,
+      "incident_count": 2,
+      "legacy_record_count": 0,
+      "incident_statuses": [
+        "detected",
+        "failed"
+      ]
+    },
+    "crashed": {
+      "event_count": 1,
+      "incident_count": 2,
+      "legacy_record_count": 0,
+      "incident_statuses": [
+        "detected",
+        "failed"
+      ]
+    },
+    "legacy_schema3": {
+      "event_count": 1,
+      "incident_count": 0,
+      "legacy_record_count": 1
+    }
+  }
+}

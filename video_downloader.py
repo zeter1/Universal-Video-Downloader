@@ -58,7 +58,7 @@ class ProblematicDownloadSkipped(Exception):
 # КОНСТАНТЫ (FIX #1: убраны магические числа)
 # ─────────────────────────────────────────────
 MAX_LOG_LINES        = 1000
-APP_VERSION          = "5.8 VPN SMART"
+APP_VERSION          = "5.9 VPN SMART"
 MAX_VIDEOS_PER_LIST  = 1000
 MAX_CONCURRENT_DL    = 2
 MAX_SPLIT_HOURS      = 10
@@ -73,6 +73,10 @@ DOWNLOAD_HISTORY_RETENTION_DAYS = 60
 PROBLEM_LOG_RETENTION_DAYS = 120
 MAX_DOWNLOAD_LINK_SESSIONS = 40  # сколько последних сессий очереди ссылок хранить
 LOG_ENTRY_SPACING_PX = 4      # вертикальный отступ между строками лога
+LOG_TAB_ALL = "all"
+LOG_TAB_DOWNLOAD_FAILED = "download_failed"
+LOG_TAB_ERRORS = "errors"
+LOG_CATEGORY_DOWNLOAD_FAILED = "download_failed"
 AUDIO_DURATION_TOLERANCE_SEC = 1.0  # если mp3 короче исходника на 1+ сек — считаем проблемой
 MIN_AUDIO_FILE_SIZE_BYTES = 1000
 MIN_VIDEO_FILE_SIZE_BYTES = 1000
@@ -130,9 +134,12 @@ YT_DLP_SLOW_FRAGMENT_RETRIES = 2
 DEFAULT_PROXY_EXAMPLE = "socks5://127.0.0.1:1080"
 YT_DLP_NETWORK_RETRY_PAUSE_SEC = 2
 YT_DLP_SLOW_NETWORK_FAILURE_SEC = 90
-YT_DLP_MAX_NETWORK_FAILURES_PER_VIDEO = 999
-YT_DLP_MAX_SLOW_NETWORK_FAILURES_PER_VIDEO = 999
-YT_DLP_FAST_FAIL_ENABLED = False
+# Один долгий сетевой сбой ещё может восстановиться через progressive fallback.
+# После двух медленных либо трёх любых сетевых сбоев по одному ролику дальнейший
+# перебор десятков похожих стратегий уже только задерживает остальную очередь.
+YT_DLP_MAX_NETWORK_FAILURES_PER_VIDEO = 3
+YT_DLP_MAX_SLOW_NETWORK_FAILURES_PER_VIDEO = 2
+YT_DLP_FAST_FAIL_ENABLED = True
 YT_DLP_ADAPTIVE_PRIMARY_FAILURE_THRESHOLD = 3
 # По свежим логам параллельные фрагменты + chunk=8M на YouTube давали
 # Connection timed out / SSL EOF от googlevideo.com. Поэтому первая попытка
@@ -169,6 +176,43 @@ PROBLEM_LOG_INFO_STDOUT_TAIL_CHARS = 1200
 PROBLEM_LOG_INFO_CONTEXT_TEXT_CHARS = 1200
 PROBLEM_LOG_INFO_LIST_LIMIT = 10
 PROBLEM_LOG_INFO_FILE_SNAPSHOT_LIMIT = 5
+
+HTTP_URL_RE = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
+
+
+def find_clickable_urls(text: str) -> List[Tuple[int, int, str]]:
+    """Возвращает полные http(s)-ссылки и их позиции в строке лога."""
+    result: List[Tuple[int, int, str]] = []
+    for match in HTTP_URL_RE.finditer(text):
+        url = match.group(0).rstrip(".,;:!?…»”")
+        for opening, closing in (("(", ")"), ("[", "]"), ("{", "}")):
+            while url.endswith(closing) and url.count(closing) > url.count(opening):
+                url = url[:-1]
+        if url:
+            result.append((match.start(), match.start() + len(url), url))
+    return result
+
+
+def log_tabs_for_entry(level: str, category: Optional[str]) -> Tuple[str, ...]:
+    """Определяет вкладки, в которые должна попасть запись UI-лога."""
+    tabs = [LOG_TAB_ALL]
+    if category == LOG_CATEGORY_DOWNLOAD_FAILED:
+        tabs.append(LOG_TAB_DOWNLOAD_FAILED)
+    if level in ("ERROR", "CRITICAL"):
+        tabs.append(LOG_TAB_ERRORS)
+    return tuple(tabs)
+
+
+def is_copy_shortcut(keysym: str, keycode: Optional[int]) -> bool:
+    """Распознаёт Ctrl+C и на английской, и на русской раскладке Windows."""
+    normalized = (keysym or "").casefold()
+    return keycode == ord("C") or normalized in {"c", "с", "cyrillic_es"}
+
+
+def is_paste_shortcut(keysym: str, keycode: Optional[int]) -> bool:
+    """Распознаёт Ctrl+V и на английской, и на русской раскладке Windows."""
+    normalized = (keysym or "").casefold()
+    return keycode == ord("V") or normalized in {"v", "м", "cyrillic_em"}
 
 
 class ThreadSafeList:
@@ -374,7 +418,7 @@ class VideoDownloader:
         self.setup_logger()
 
         # FIX #4: лог-очередь для батч-сброса в UI (предотвращает flooding root.after)
-        self._log_queue: List[Tuple[str, str, bool]] = []
+        self._log_queue: List[Tuple[str, str, bool, Optional[str]]] = []
         self._log_flush_pending = False
         self._log_lock = Lock()
 
@@ -1318,6 +1362,9 @@ class VideoDownloader:
 - `error_signature` — стабильная сигнатура без времени, PID, путей и прогресса.
 - `problem_fingerprint` — точный отпечаток конкретного события для совместимости.
 - `incident_id` и `status` показывают переходы `detected -> retrying -> recovered`.
+- `strategy_metrics`, `strategy_findings` и `recommended_next_checks` показывают
+  неэффективные стратегии и подтверждённо успешные fallback даже при итоговом успехе.
+- В `yt_dlp_download_attempt` сетевые счётчики уже включают текущую попытку.
 - `attachment.status=suppressed_repetition` означает, что полный повтор не записан из-за лимита.
 - Одинаковые диагностические блоки хранятся один раз по SHA-256.
 
@@ -2864,7 +2911,11 @@ class VideoDownloader:
             self.problem_schema_validation_failures += 1
 
         context = entry.get("context") if isinstance(entry.get("context"), dict) else {}
-        strategy = context.get("strategy") or context.get("strategy_name")
+        strategy = (
+            context.get("strategy")
+            or context.get("strategy_name")
+            or context.get("successful_strategy")
+        )
         if strategy:
             metrics = self.problem_strategy_metrics.setdefault(
                 str(strategy), Counter()
@@ -2879,6 +2930,8 @@ class VideoDownloader:
                 "WARNING", "ERROR", "CRITICAL"
             }:
                 metrics["attempts_failed"] += 1
+            elif operation == "yt_dlp_recovered_after_fallback":
+                metrics["fallback_recoveries"] += 1
             if entry.get("resolved"):
                 metrics["recovered"] += 1
 
@@ -3275,6 +3328,58 @@ class VideoDownloader:
             result[strategy] = values
         return result
 
+    def _problem_strategy_findings(self,
+                                   strategy_metrics: Dict[str, Dict]) -> List[Dict]:
+        """Выделяет устойчиво плохие стратегии и подтверждённые fallback."""
+        findings: List[Dict] = []
+        for strategy, metrics in strategy_metrics.items():
+            attempts = int(metrics.get("attempts") or 0)
+            failed = int(metrics.get("attempts_failed") or 0)
+            succeeded = int(metrics.get("attempts_succeeded") or 0)
+            failure_rate = float(metrics.get("failure_rate") or 0.0)
+            success_rate = float(metrics.get("success_rate") or 0.0)
+            fallback_recoveries = int(metrics.get("fallback_recoveries") or 0)
+            if attempts >= 3 and failure_rate >= 0.8:
+                findings.append({
+                    "kind": "ineffective_strategy",
+                    "strategy": strategy,
+                    "attempts": attempts,
+                    "failed": failed,
+                    "succeeded": succeeded,
+                    "failure_rate": failure_rate,
+                    "message": (
+                        f"Стратегия «{strategy}» неуспешна в {failed} из "
+                        f"{attempts} попыток ({failure_rate:.0%}); проверить её "
+                        "параметры или понизить приоритет."
+                    ),
+                })
+            if (
+                attempts >= 3
+                and fallback_recoveries >= 3
+                and success_rate >= 0.8
+            ):
+                findings.append({
+                    "kind": "effective_fallback",
+                    "strategy": strategy,
+                    "attempts": attempts,
+                    "failed": failed,
+                    "succeeded": succeeded,
+                    "success_rate": success_rate,
+                    "fallback_recoveries": fallback_recoveries,
+                    "message": (
+                        f"Fallback «{strategy}» восстановил "
+                        f"{fallback_recoveries} загрузок и успешен в {succeeded} "
+                        f"из {attempts} попыток ({success_rate:.0%}); рассмотреть "
+                        "его более ранний запуск."
+                    ),
+                })
+        findings.sort(key=lambda item: (
+            0 if item.get("kind") == "ineffective_strategy" else 1,
+            -int(item.get("attempts") or 0),
+            str(item.get("strategy") or ""),
+        ))
+        return findings
+
     def _deduplicate_problem_health_records(
         self, records: List[Dict]
     ) -> List[Dict]:
@@ -3375,6 +3480,8 @@ class VideoDownloader:
         top_signatures = summary.get("top_error_signatures") or []
         unresolved = summary.get("unresolved_problems") or []
         regression = summary.get("regression") or {}
+        strategy_findings = summary.get("strategy_findings") or []
+        recommended_checks = summary.get("recommended_next_checks") or []
         lines = [
             "# Итог диагностической сессии",
             "",
@@ -3417,6 +3524,14 @@ class VideoDownloader:
                 lines.append(
                     f"- `{item.get('error_signature')}`: {item.get('message')}"
                 )
+        if strategy_findings:
+            lines.extend(["", "## Выводы по стратегиям", ""])
+            for item in strategy_findings[:10]:
+                lines.append(f"- {item.get('message')}")
+        if recommended_checks:
+            lines.extend(["", "## Рекомендуемые проверки", ""])
+            for item in recommended_checks[:20]:
+                lines.append(f"- {item}")
         if regression.get("compared_sessions"):
             lines.extend([
                 "",
@@ -3587,6 +3702,9 @@ class VideoDownloader:
                     [item["error_signature"] for item in top_signatures],
                 )
                 strategy_metrics = self._problem_strategy_summary()
+                strategy_findings = self._problem_strategy_findings(
+                    strategy_metrics
+                )
                 recommended_next_checks: List[str] = []
                 for unresolved_entry in reversed(unresolved):
                     for check in (
@@ -3598,6 +3716,12 @@ class VideoDownloader:
                             recommended_next_checks.append(check)
                         if len(recommended_next_checks) >= 20:
                             break
+                    if len(recommended_next_checks) >= 20:
+                        break
+                for finding in strategy_findings:
+                    check = str(finding.get("message") or "").strip()
+                    if check and check not in recommended_next_checks:
+                        recommended_next_checks.append(check)
                     if len(recommended_next_checks) >= 20:
                         break
                 incident_status_counts = Counter(
@@ -3669,6 +3793,7 @@ class VideoDownloader:
                     ),
                     "top_error_signatures": top_signatures,
                     "strategy_metrics": strategy_metrics,
+                    "strategy_findings": strategy_findings,
                     "recommended_next_checks": recommended_next_checks,
                     "timings": {
                         "sample_count": len(self.problem_duration_samples),
@@ -5761,6 +5886,52 @@ class VideoDownloader:
         )
         return any(marker in lowered for marker in markers)
 
+    def _is_youtube_network_error(self, text: str) -> bool:
+        lowered = str(text or "").casefold()
+        markers = (
+            "connection aborted", "connectionreseterror",
+            "connection reset by peer", "timeout", "timed out",
+            "unable to download webpage", "read timed out",
+            "http error 416", "http error 429", "http error 500",
+            "http error 502", "http error 503", "http error 504",
+            "ssl:", "unexpected_eof", "eof occurred",
+            "handshake failure", "aria2c exited",
+            "connect timeout", "connection to", "remote end closed",
+            "incomplete read", "temporarily unavailable", "winerror 10054",
+            "удаленный хост принудительно разорвал",
+            "удалённый хост принудительно разорвал",
+        )
+        return any(marker in lowered for marker in markers)
+
+    def _updated_youtube_network_failure_counts(
+        self,
+        error_text: str,
+        attempt_elapsed: float,
+        network_failure_count: int,
+        slow_network_failure_count: int,
+    ) -> Tuple[int, int, bool]:
+        is_network_error = self._is_youtube_network_error(error_text)
+        if not is_network_error:
+            return network_failure_count, slow_network_failure_count, False
+        network_failure_count += 1
+        if attempt_elapsed >= YT_DLP_SLOW_NETWORK_FAILURE_SEC:
+            slow_network_failure_count += 1
+        return network_failure_count, slow_network_failure_count, True
+
+    def _should_fast_fail_youtube_network(
+        self,
+        network_failure_count: int,
+        slow_network_failure_count: int,
+    ) -> bool:
+        return bool(
+            YT_DLP_FAST_FAIL_ENABLED
+            and (
+                network_failure_count >= YT_DLP_MAX_NETWORK_FAILURES_PER_VIDEO
+                or slow_network_failure_count
+                >= YT_DLP_MAX_SLOW_NETWORK_FAILURES_PER_VIDEO
+            )
+        )
+
     def _note_youtube_primary_strategy_result(self, success: bool,
                                               error_text: str = "") -> None:
         with self.youtube_strategy_state_lock:
@@ -5772,28 +5943,58 @@ class VideoDownloader:
 
     def _apply_adaptive_youtube_strategy_order(self,
                                                strategies: List[Dict]) -> List[Dict]:
-        """После серии блокировок web-клиента пробует Android до 1080p первым."""
+        """После серии web-блокировок ставит рабочие Android-варианты первыми."""
         with self.youtube_strategy_state_lock:
             enabled = (
                 self.youtube_primary_auth_failure_count
                 >= YT_DLP_ADAPTIVE_PRIMARY_FAILURE_THRESHOLD
             )
+            trigger_failure_count = self.youtube_primary_auth_failure_count
             should_log = enabled and not self.youtube_adaptive_strategy_logged
             if should_log:
                 self.youtube_adaptive_strategy_logged = True
         if not enabled:
             return strategies
 
-        preferred_name = "Android Client small chunks"
-        preferred = [item for item in strategies if item.get("name") == preferred_name]
-        remaining = [item for item in strategies if item.get("name") != preferred_name]
+        preferred_names = (
+            "Android Client small chunks",
+            "Android Progressive MP4 early",
+        )
+        preferred = [
+            item
+            for name in preferred_names
+            for item in strategies
+            if item.get("name") == name
+        ]
+        remaining = [
+            item for item in strategies
+            if item.get("name") not in preferred_names
+        ]
+        reordered = preferred + remaining
         if should_log:
             self.log(
                 "🧭 После повторных 403/проверок «не робот» сначала пробую "
-                "Android-клиент с качеством до 1080p",
+                "Android-клиент с качеством до 1080p, затем цельный Android MP4",
                 "INFO"
             )
-        return preferred + remaining
+            self.record_problem(
+                "Включён адаптивный порядок стратегий YouTube",
+                "INFO",
+                "youtube_adaptive_strategy_order",
+                {
+                    "trigger": "repeated_youtube_auth_or_forbidden",
+                    "trigger_failure_count": trigger_failure_count,
+                    "threshold": YT_DLP_ADAPTIVE_PRIMARY_FAILURE_THRESHOLD,
+                    "preferred_order": list(preferred_names),
+                    "original_first_strategies": [
+                        item.get("name") for item in strategies[:6]
+                    ],
+                    "effective_first_strategies": [
+                        item.get("name") for item in reordered[:6]
+                    ],
+                },
+            )
+        return reordered
 
     def make_video_download_temp_dir(self, video_dir: Path, url: str, expected_video_id: Optional[str]) -> Path:
         """Отдельная временная папка для одного ролика.
@@ -5939,13 +6140,15 @@ class VideoDownloader:
             # на цельный MP4-поток и другие клиенты YouTube, а не тратим минуты на тот же CDN.
             {'name': 'EJS GitHub stable auto quality', 'fallback_format': False,
              'args': [], 'network_args': default_network_args, 'ejs_mode': 'github'},
-            {'name': 'Early progressive MP4 no force IPv4', 'fallback_format': False,
-             'progressive_format': True, 'args': [], 'network_args': no_force_ipv4_network_args,
-             'ejs_mode': 'github'},
+            # Свежая сессия: Android progressive восстановил 5/5 загрузок,
+            # обычный early progressive был успешен только в 1/6 попыток.
             {'name': 'Android Progressive MP4 early', 'fallback_format': False,
              'progressive_format': True,
              'args': ["--extractor-args", "youtube:player_client=android"],
              'network_args': no_force_ipv4_network_args, 'ejs_mode': 'github'},
+            {'name': 'Early progressive MP4 no force IPv4', 'fallback_format': False,
+             'progressive_format': True, 'args': [], 'network_args': no_force_ipv4_network_args,
+             'ejs_mode': 'github'},
             {'name': 'EJS GitHub stable auto quality IPv4', 'fallback_format': False,
              'args': [], 'network_args': default_ipv4_network_args, 'ejs_mode': 'github'},
             {'name': 'EJS GitHub stable auto quality IPv6', 'fallback_format': False,
@@ -6312,6 +6515,14 @@ class VideoDownloader:
                         self._note_youtube_primary_strategy_result(
                             False, last_error
                         )
+                    network_failure_count, slow_network_failure_count, is_network_error = (
+                        self._updated_youtube_network_failure_counts(
+                            last_error,
+                            attempt_elapsed,
+                            network_failure_count,
+                            slow_network_failure_count,
+                        )
+                    )
                     googlevideo_hosts = sorted(set(re.findall(r"host='([^']*googlevideo\.com)'|https?://([^/\s]*googlevideo\.com)", last_error)))
                     googlevideo_hosts = sorted({h for pair in googlevideo_hosts for h in pair if h})
                     attempt_summaries.append({
@@ -6333,6 +6544,9 @@ class VideoDownloader:
                             "attempt_elapsed_sec": round(attempt_elapsed, 2),
                             "network_failure_count": network_failure_count,
                             "slow_network_failure_count": slow_network_failure_count,
+                            "is_network_error": is_network_error,
+                            "will_retry": will_retry,
+                            "remaining_strategy_count": max(0, len(strategies) - attempt),
                         }
                     )
 
@@ -6395,24 +6609,7 @@ class VideoDownloader:
                         self.log(f"❌ Видео недоступно: {last_error[:200]}", "ERROR")
                         break
 
-                    network_errors = [
-                        "Connection aborted", "ConnectionResetError",
-                        "Connection reset by peer", "timeout", "timed out",
-                        "Unable to download webpage", "Read timed out",
-                        "HTTP Error 416", "HTTP Error 429", "HTTP Error 500",
-                        "HTTP Error 502", "HTTP Error 503", "HTTP Error 504",
-                        "SSL:", "UNEXPECTED_EOF", "EOF occurred",
-                        "handshake failure", "aria2c exited",
-                        "connect timeout", "connection to", "remote end closed", "incomplete read",
-                        "temporarily unavailable", "WinError 10054",
-                        "удаленный хост принудительно разорвал",
-                        "удалённый хост принудительно разорвал",
-                    ]
-                    if any(e.lower() in stderr_lower for e in network_errors):
-                        network_failure_count += 1
-                        if attempt_elapsed >= YT_DLP_SLOW_NETWORK_FAILURE_SEC:
-                            slow_network_failure_count += 1
-
+                    if is_network_error:
                         if network_failure_count == 3 and not proxy_enabled:
                             self.log(
                                 "🌐 Уже 3 одинаковых сетевых сбоя googlevideo.com без proxy. "
@@ -6437,15 +6634,15 @@ class VideoDownloader:
                             )
 
                         too_many_network_failures = (
-                            YT_DLP_FAST_FAIL_ENABLED
-                            and (
-                                network_failure_count >= YT_DLP_MAX_NETWORK_FAILURES_PER_VIDEO
-                                or slow_network_failure_count >= YT_DLP_MAX_SLOW_NETWORK_FAILURES_PER_VIDEO
+                            self._should_fast_fail_youtube_network(
+                                network_failure_count,
+                                slow_network_failure_count,
                             )
                         )
                         if too_many_network_failures:
                             self.log(
-                                "⚠️ Сеть несколько раз долго рвала соединение; пропускаю остальные попытки для этого видео",
+                                "⚠️ Сеть повторно рвала соединение или долго не отвечала; "
+                                "пропускаю остальные попытки для этого видео",
                                 "WARNING"
                             )
                             self.record_problem(
@@ -7280,7 +7477,8 @@ class VideoDownloader:
             )
             self.log(
                 f"📁 Открыть папку Обработать вручную: {self.manual_processing_dir}",
-                "MANUAL_FOLDER_LINK"
+                "MANUAL_FOLDER_LINK",
+                category=LOG_CATEGORY_DOWNLOAD_FAILED,
             )
             self.record_problem(
                 "Итог конвертации: часть видео не сконвертировалась или потеряла длительность",
@@ -7455,10 +7653,14 @@ class VideoDownloader:
                                failed_urls: ThreadSafeList,
                                problematic_downloads: ThreadSafeList) -> None:
         try:
-            self.log(f"📥 [{index + 1}/{self.total_files.value()}]: {url[:80]}...")
+            self.log(f"📥 [{index + 1}/{self.total_files.value()}]: {url}")
 
             if not self.validate_url(url):
-                self.log(f"❌ Неверный формат URL: {url}", "ERROR")
+                self.log(
+                    f"❌ Неверный формат URL: {url}",
+                    "ERROR",
+                    category=LOG_CATEGORY_DOWNLOAD_FAILED,
+                )
                 failed_urls.append(url)
                 return
 
@@ -7491,7 +7693,11 @@ class VideoDownloader:
                     manual_video = self.move_video_to_manual_processing(
                         result, "downloaded_video_validation_failed"
                     )
-                    self.log(f"❌ Скачанный файл не прошёл проверку: {reason}", "ERROR")
+                    self.log(
+                        f"❌ Скачанный файл не прошёл проверку: {url} — {reason}",
+                        "ERROR",
+                        category=LOG_CATEGORY_DOWNLOAD_FAILED,
+                    )
                     self.record_problem(
                         "Скачанный файл не прошёл проверку ffprobe и не записан в историю",
                         "ERROR", "downloaded_video_validation_failed",
@@ -7505,7 +7711,11 @@ class VideoDownloader:
             else:
                 if not self.cancel_flag.is_set():
                     failed_urls.append(url)
-                    self.log(f"❌ Не удалось скачать: {url[:80]}", "ERROR")
+                    self.log(
+                        f"❌ Не удалось скачать: {url}",
+                        "ERROR",
+                        category=LOG_CATEGORY_DOWNLOAD_FAILED,
+                    )
                     self.record_problem(
                         "Видео не скачалось или файл не появился после yt-dlp",
                         "ERROR", "download_single_video_no_result",
@@ -7522,8 +7732,9 @@ class VideoDownloader:
             item["total_in_session"] = self.total_files.value()
             problematic_downloads.append(item)
             self.log(
-                f"⏭️ Пропущено проблемно скачиваемое видео: {e.reason}",
-                "WARNING"
+                f"⏭️ Пропущено проблемно скачиваемое видео: {e.url} — {e.reason}",
+                "WARNING",
+                category=LOG_CATEGORY_DOWNLOAD_FAILED,
             )
             self.record_problem(
                 "Видео пропущено как проблемно скачиваемое и будет записано в отдельный txt",
@@ -7534,7 +7745,11 @@ class VideoDownloader:
             self.log("🛑 Загрузка прервана пользователем", "WARNING")
             raise
         except Exception as e:
-            self.log(f"❌ Ошибка: {str(e)}", "ERROR")
+            self.log(
+                f"❌ Ошибка при скачивании {url}: {str(e)}",
+                "ERROR",
+                category=LOG_CATEGORY_DOWNLOAD_FAILED,
+            )
             self.file_logger.error(f"download_single_video: {traceback.format_exc()}")
             failed_urls.append(url)
         finally:
@@ -7587,7 +7802,7 @@ class VideoDownloader:
                     self.log("🛑 Загрузка отменена пользователем", "WARNING")
                     break
                 if self.is_url_downloaded(url):
-                    self.log(f"⚠️ Пропущено (уже скачано ранее): {url[:80]}", "WARNING")
+                    self.log(f"⚠️ Пропущено (уже скачано ранее): {url}", "WARNING")
                     self.update_progress()
                     continue
                 future = executor.submit(
@@ -7666,11 +7881,13 @@ class VideoDownloader:
             self.log(
                 f"⚠️ Пропущено {len(current_problematic)} проблемно скачиваемых видео. "
                 f"Ссылки сохранены для ручной обработки: {problematic_location}",
-                "WARNING"
+                "WARNING",
+                category=LOG_CATEGORY_DOWNLOAD_FAILED,
             )
             self.log(
                 f"📁 Открыть папку Обработать вручную: {self.manual_processing_dir}",
-                "MANUAL_FOLDER_LINK"
+                "MANUAL_FOLDER_LINK",
+                category=LOG_CATEGORY_DOWNLOAD_FAILED,
             )
 
         current_failed = failed_urls.copy()
@@ -7680,7 +7897,9 @@ class VideoDownloader:
             failed_location = failed_file.name if failed_file else "Обработать вручную"
             self.log(
                 f"⚠️ Не удалось скачать {len(current_failed)} видео. "
-                f"Ссылки сохранены для ручной обработки: {failed_location}", "WARNING"
+                f"Ссылки сохранены для ручной обработки: {failed_location}",
+                "WARNING",
+                category=LOG_CATEGORY_DOWNLOAD_FAILED,
             )
             self.log(
                 f"📁 Открыть папку Обработать вручную: {self.manual_processing_dir}",
@@ -8313,6 +8532,15 @@ class VideoDownloader:
         except tk.TclError:
             pass
 
+    def _on_url_paste_shortcut(self, event):
+        if not is_paste_shortcut(
+                getattr(event, "keysym", ""), getattr(event, "keycode", None)):
+            return None
+        # Используем штатную виртуальную вставку Tk: она правильно заменяет
+        # выделенный текст и сохраняет обычное поведение Ctrl+V.
+        event.widget.event_generate("<<Paste>>")
+        return "break"
+
     def delete_text(self) -> None:
         try:
             self.url_text.delete(tk.SEL_FIRST, tk.SEL_LAST)
@@ -8929,7 +9157,8 @@ class VideoDownloader:
     # ─────────────────────────────────────────────
 
     def log(self, message: str, level: str = "INFO", update_only: bool = False,
-            record_as_problem: bool = False) -> None:
+            record_as_problem: bool = False,
+            category: Optional[str] = None) -> None:
         timestamp   = datetime.now().strftime("%H:%M:%S")
         log_message = f"[{timestamp}] {message}"
 
@@ -8945,12 +9174,14 @@ class VideoDownloader:
             )
 
         with self._log_lock:
-            self._log_queue.append((log_message, level, update_only))
+            self._log_queue.append((log_message, level, update_only, category))
             if not self._log_flush_pending:
                 self._log_flush_pending = True
                 self.root.after(LOG_FLUSH_INTERVAL, self._flush_log_queue)
 
-    def _insert_log_message(self, log_message: str, level: str) -> None:
+    def _insert_log_message(self, log_message: str, level: str,
+                            text_widget=None) -> None:
+        text_widget = text_widget or self.log_text
         folder_link_text = {
             "HISTORY_FOLDER_LINK": "История ссылок",
             "DOWNLOAD_LINKS_FOLDER_LINK": "Ссылки на скачивания",
@@ -8959,15 +9190,28 @@ class VideoDownloader:
             "PROBLEM_FOLDER_LINK": "Логи проблем",
         }.get(level)
 
-        if not folder_link_text or folder_link_text not in log_message:
-            self.log_text.insert(tk.END, log_message + "\n", level)
-            return
+        base_level = "INFO" if folder_link_text else level
+        link_spans = []
 
-        start = log_message.find(folder_link_text)
-        end = start + len(folder_link_text)
-        self.log_text.insert(tk.END, log_message[:start], "INFO")
-        self.log_text.insert(tk.END, log_message[start:end], level)
-        self.log_text.insert(tk.END, log_message[end:] + "\n", "INFO")
+        if folder_link_text and folder_link_text in log_message:
+            start = log_message.find(folder_link_text)
+            end = start + len(folder_link_text)
+            link_spans.append((start, end, level))
+
+        for start, end, _url in find_clickable_urls(log_message):
+            link_spans.append((start, end, "URL_LINK"))
+
+        cursor = 0
+        for start, end, link_tag in sorted(link_spans):
+            if start < cursor:
+                continue
+            if start > cursor:
+                text_widget.insert(tk.END, log_message[cursor:start], base_level)
+            text_widget.insert(
+                tk.END, log_message[start:end], (base_level, link_tag)
+            )
+            cursor = end
+        text_widget.insert(tk.END, log_message[cursor:] + "\n", base_level)
 
     def _flush_log_queue(self) -> None:
         """Сброс накопленных лог-сообщений в UI (вызывается только из main thread)."""
@@ -8977,26 +9221,159 @@ class VideoDownloader:
             self._log_flush_pending = False
 
         try:
-            keep_at_bottom = self._is_log_scrolled_to_bottom()
-            for log_message, level, update_only in items:
-                if update_only:
-                    idx = self.log_text.index('end-1c').split('.')[0]
-                    if int(idx) > 1:
-                        self.log_text.delete(f"{idx}.0", "end")
-                self._insert_log_message(log_message, level)
-            lines = int(self.log_text.index('end-1c').split('.')[0])
-            if lines > MAX_LOG_LINES:
-                self.log_text.delete("1.0", f"{lines - MAX_LOG_LINES}.0")
-            if keep_at_bottom:
-                self.log_text.see(tk.END)
-        except Exception:
-            pass
+            log_widgets = getattr(
+                self, "log_text_widgets", {LOG_TAB_ALL: self.log_text}
+            )
+            affected_tabs = {
+                tab
+                for _message, level, _update_only, category in items
+                for tab in log_tabs_for_entry(level, category)
+                if tab in log_widgets
+            }
+            keep_at_bottom = {
+                tab: self._is_log_scrolled_to_bottom(log_widgets[tab])
+                for tab in affected_tabs
+            }
 
-    def _is_log_scrolled_to_bottom(self) -> bool:
+            for log_message, level, update_only, category in items:
+                for tab in log_tabs_for_entry(level, category):
+                    text_widget = log_widgets.get(tab)
+                    if text_widget is None:
+                        continue
+                    if update_only:
+                        idx = text_widget.index('end-1c').split('.')[0]
+                        if int(idx) > 1:
+                            text_widget.delete(f"{idx}.0", "end")
+                    self._insert_log_message(log_message, level, text_widget)
+
+            for tab in affected_tabs:
+                text_widget = log_widgets[tab]
+                lines = int(text_widget.index('end-1c').split('.')[0])
+                if lines > MAX_LOG_LINES:
+                    text_widget.delete("1.0", f"{lines - MAX_LOG_LINES}.0")
+                if keep_at_bottom[tab]:
+                    text_widget.see(tk.END)
+        except Exception as e:
+            try:
+                self.file_logger.error(f"_flush_log_queue: {e}")
+            except Exception:
+                pass
+
+    def _is_log_scrolled_to_bottom(self, text_widget=None) -> bool:
+        text_widget = text_widget or self.log_text
         try:
-            return self.log_text.yview()[1] >= 0.995
+            return text_widget.yview()[1] >= 0.995
         except Exception:
             return True
+
+    def _open_url_at_event(self, event):
+        text_widget = event.widget
+        try:
+            click_index = text_widget.index(f"@{event.x},{event.y}")
+            ranges = text_widget.tag_ranges("URL_LINK")
+            for start, end in zip(ranges[0::2], ranges[1::2]):
+                if (text_widget.compare(click_index, ">=", start)
+                        and text_widget.compare(click_index, "<", end)):
+                    url = text_widget.get(start, end)
+                    webbrowser.open_new_tab(url)
+                    break
+        except Exception as e:
+            self.log(f"❌ Не удалось открыть ссылку: {e}", "ERROR")
+        return "break"
+
+    def _copy_log_selection(self, text_widget) -> bool:
+        try:
+            text = text_widget.get(tk.SEL_FIRST, tk.SEL_LAST)
+            if not text:
+                return False
+            self.root.clipboard_clear()
+            self.root.clipboard_append(text)
+            return True
+        except tk.TclError:
+            return False
+
+    def _on_log_copy_shortcut(self, event):
+        if not is_copy_shortcut(
+                getattr(event, "keysym", ""), getattr(event, "keycode", None)):
+            return None
+        self._copy_log_selection(event.widget)
+        return "break"
+
+    def _copy_selected_log_text(self) -> None:
+        text_widget = getattr(self, "_log_context_widget", None)
+        if text_widget is not None:
+            self._copy_log_selection(text_widget)
+
+    def _show_log_context_menu(self, event):
+        self._log_context_widget = event.widget
+        try:
+            event.widget.get(tk.SEL_FIRST, tk.SEL_LAST)
+            state = tk.NORMAL
+        except tk.TclError:
+            state = tk.DISABLED
+        self.log_context_menu.entryconfigure(0, state=state)
+        try:
+            self.log_context_menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            self.log_context_menu.grab_release()
+        return "break"
+
+    def _configure_log_text_widget(self, text_widget) -> None:
+        text_widget.configure(spacing3=LOG_ENTRY_SPACING_PX)
+        text_widget.bind("<MouseWheel>", self._on_log_mousewheel)
+        text_widget.bind("<Button-4>", self._on_log_mousewheel)
+        text_widget.bind("<Button-5>", self._on_log_mousewheel)
+        text_widget.bind("<Control-KeyPress>", self._on_log_copy_shortcut)
+        text_widget.bind("<Button-3>", self._show_log_context_menu)
+
+        text_widget.tag_config("ERROR", foreground="red", font=("Arial", 9, "bold"))
+        text_widget.tag_config("WARNING", foreground="orange", font=("Arial", 9, "bold"))
+        text_widget.tag_config("SUCCESS", foreground="green")
+        text_widget.tag_config("INFO", foreground="black")
+        text_widget.tag_config("CRITICAL", foreground="red", font=("Arial", 10, "bold"))
+
+        folder_links = {
+            "HISTORY_FOLDER_LINK": self.open_history_folder,
+            "DOWNLOAD_LINKS_FOLDER_LINK": self.open_download_links_folder,
+            "DOWNLOADED_SESSIONS_FOLDER_LINK": self.open_downloaded_sessions_folder,
+            "MANUAL_FOLDER_LINK": self.open_manual_processing_folder,
+            "PROBLEM_FOLDER_LINK": self.open_problem_logs_folder,
+        }
+        for tag_name, callback in folder_links.items():
+            text_widget.tag_config(
+                tag_name, foreground="#0066cc", underline=True,
+                font=("Arial", 9, "bold")
+            )
+            text_widget.tag_bind(tag_name, "<Button-1>", callback)
+            text_widget.tag_bind(
+                tag_name, "<Enter>",
+                lambda _event, widget=text_widget: widget.configure(cursor="hand2")
+            )
+            text_widget.tag_bind(
+                tag_name, "<Leave>",
+                lambda _event, widget=text_widget: widget.configure(cursor="")
+            )
+
+        text_widget.tag_config(
+            "URL_LINK", foreground="#0066cc", underline=True
+        )
+        text_widget.tag_bind("URL_LINK", "<Button-1>", self._open_url_at_event)
+        text_widget.tag_bind(
+            "URL_LINK", "<Enter>",
+            lambda _event, widget=text_widget: widget.configure(cursor="hand2")
+        )
+        text_widget.tag_bind(
+            "URL_LINK", "<Leave>",
+            lambda _event, widget=text_widget: widget.configure(cursor="")
+        )
+
+        for tag_name in (
+            "ERROR", "WARNING", "SUCCESS", "INFO", "CRITICAL",
+            "HISTORY_FOLDER_LINK", "DOWNLOAD_LINKS_FOLDER_LINK",
+            "DOWNLOADED_SESSIONS_FOLDER_LINK", "MANUAL_FOLDER_LINK",
+            "PROBLEM_FOLDER_LINK", "URL_LINK",
+        ):
+            text_widget.tag_config(tag_name, spacing3=LOG_ENTRY_SPACING_PX)
 
     def open_folder_path(self, folder: Path, error_label: str) -> None:
         try:
@@ -9055,7 +9432,7 @@ class VideoDownloader:
                 if units == 0:
                     units = -1 if delta > 0 else 1
                 units *= 3
-            self.log_text.yview_scroll(units, "units")
+            event.widget.yview_scroll(units, "units")
             return "break"
         except Exception:
             return "break"
@@ -9120,6 +9497,7 @@ class VideoDownloader:
         self.context_menu.add_command(label="Копировать", command=self.copy_text)
         self.context_menu.add_command(label="Вставить",   command=self.paste_text)
         self.context_menu.add_command(label="Удалить",    command=self.delete_text)
+        self.url_text.bind("<Control-KeyPress>", self._on_url_paste_shortcut)
         self.url_text.bind("<Button-3>", self.show_context_menu)
 
         # ── Список видео из HTML ──
@@ -9295,65 +9673,33 @@ class VideoDownloader:
         log_frame.columnconfigure(0, weight=1)
         log_frame.rowconfigure(0, weight=1)
 
-        self.log_text = scrolledtext.ScrolledText(log_frame, height=15, wrap=tk.WORD)
-        self.log_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
-        self.log_text.configure(spacing3=LOG_ENTRY_SPACING_PX)
-        self.log_text.bind("<MouseWheel>", self._on_log_mousewheel)
-        self.log_text.bind("<Button-4>", self._on_log_mousewheel)
-        self.log_text.bind("<Button-5>", self._on_log_mousewheel)
-        self.log_text.tag_config("ERROR",    foreground="red",    font=("Arial", 9, "bold"))
-        self.log_text.tag_config("WARNING",  foreground="orange", font=("Arial", 9, "bold"))
-        self.log_text.tag_config("SUCCESS",  foreground="green")
-        self.log_text.tag_config("INFO",     foreground="black")
-        self.log_text.tag_config("CRITICAL", foreground="red",    font=("Arial", 10, "bold"))
-        self.log_text.tag_config("HISTORY_FOLDER_LINK", foreground="#0066cc",
-                                 underline=True, font=("Arial", 9, "bold"))
-        self.log_text.tag_bind("HISTORY_FOLDER_LINK", "<Button-1>", self.open_history_folder)
-        self.log_text.tag_bind("HISTORY_FOLDER_LINK", "<Enter>",
-                               lambda e: self.log_text.config(cursor="hand2"))
-        self.log_text.tag_bind("HISTORY_FOLDER_LINK", "<Leave>",
-                               lambda e: self.log_text.config(cursor=""))
-        self.log_text.tag_config("DOWNLOAD_LINKS_FOLDER_LINK", foreground="#0066cc",
-                                 underline=True, font=("Arial", 9, "bold"))
-        self.log_text.tag_bind("DOWNLOAD_LINKS_FOLDER_LINK", "<Button-1>", self.open_download_links_folder)
-        self.log_text.tag_bind("DOWNLOAD_LINKS_FOLDER_LINK", "<Enter>",
-                               lambda e: self.log_text.config(cursor="hand2"))
-        self.log_text.tag_bind("DOWNLOAD_LINKS_FOLDER_LINK", "<Leave>",
-                               lambda e: self.log_text.config(cursor=""))
-        self.log_text.tag_config("DOWNLOADED_SESSIONS_FOLDER_LINK", foreground="#0066cc",
-                                 underline=True, font=("Arial", 9, "bold"))
-        self.log_text.tag_bind(
-            "DOWNLOADED_SESSIONS_FOLDER_LINK", "<Button-1>",
-            self.open_downloaded_sessions_folder
+        self.log_context_menu = tk.Menu(log_frame, tearoff=0)
+        self.log_context_menu.add_command(
+            label="Копировать", command=self._copy_selected_log_text
         )
-        self.log_text.tag_bind("DOWNLOADED_SESSIONS_FOLDER_LINK", "<Enter>",
-                               lambda e: self.log_text.config(cursor="hand2"))
-        self.log_text.tag_bind("DOWNLOADED_SESSIONS_FOLDER_LINK", "<Leave>",
-                               lambda e: self.log_text.config(cursor=""))
-        self.log_text.tag_config("MANUAL_FOLDER_LINK", foreground="#0066cc",
-                                 underline=True, font=("Arial", 9, "bold"))
-        self.log_text.tag_bind(
-            "MANUAL_FOLDER_LINK", "<Button-1>",
-            self.open_manual_processing_folder
-        )
-        self.log_text.tag_bind("MANUAL_FOLDER_LINK", "<Enter>",
-                               lambda e: self.log_text.config(cursor="hand2"))
-        self.log_text.tag_bind("MANUAL_FOLDER_LINK", "<Leave>",
-                               lambda e: self.log_text.config(cursor=""))
-        self.log_text.tag_config("PROBLEM_FOLDER_LINK", foreground="#0066cc",
-                                 underline=True, font=("Arial", 9, "bold"))
-        self.log_text.tag_bind("PROBLEM_FOLDER_LINK", "<Button-1>", self.open_problem_logs_folder)
-        self.log_text.tag_bind("PROBLEM_FOLDER_LINK", "<Enter>",
-                               lambda e: self.log_text.config(cursor="hand2"))
-        self.log_text.tag_bind("PROBLEM_FOLDER_LINK", "<Leave>",
-                               lambda e: self.log_text.config(cursor=""))
-        for tag_name in (
-            "ERROR", "WARNING", "SUCCESS", "INFO", "CRITICAL",
-            "HISTORY_FOLDER_LINK", "DOWNLOAD_LINKS_FOLDER_LINK",
-            "DOWNLOADED_SESSIONS_FOLDER_LINK",
-            "MANUAL_FOLDER_LINK", "PROBLEM_FOLDER_LINK"
+        self._log_context_widget = None
+
+        self.log_notebook = ttk.Notebook(log_frame)
+        self.log_notebook.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        self.log_text_widgets = {}
+        for tab_key, tab_title in (
+            (LOG_TAB_ALL, "Весь лог загрузки"),
+            (LOG_TAB_DOWNLOAD_FAILED, "Не скачалось"),
+            (LOG_TAB_ERRORS, "Ошибки"),
         ):
-            self.log_text.tag_config(tag_name, spacing3=LOG_ENTRY_SPACING_PX)
+            tab_frame = ttk.Frame(self.log_notebook)
+            tab_frame.columnconfigure(0, weight=1)
+            tab_frame.rowconfigure(0, weight=1)
+            self.log_notebook.add(tab_frame, text=tab_title)
+            text_widget = scrolledtext.ScrolledText(
+                tab_frame, height=15, wrap=tk.WORD
+            )
+            text_widget.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+            self.log_text_widgets[tab_key] = text_widget
+            self._configure_log_text_widget(text_widget)
+
+        # Старое имя остаётся ссылкой на полный лог для совместимости методов UI.
+        self.log_text = self.log_text_widgets[LOG_TAB_ALL]
 
         # Инициализация состояния
         self.on_merge_change()
