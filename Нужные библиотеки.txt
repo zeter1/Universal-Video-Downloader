@@ -1,0 +1,78 @@
+какие библиотеки нужно установить, чтоб всё хорошо работало ?Для полноценной работы программы нужно установить следующие компоненты:
+📦 Обязательные компоненты:
+1. Python библиотеки
+bash# tkinter (обычно уже включен в Python)
+# Если нет, то:
+# Ubuntu/Debian: sudo apt-get install python3-tk
+# Fedora: sudo dnf install python3-tkinter
+2. yt-dlp (главный инструмент для скачивания)
+bash# Windows/Linux/Mac:
+pip install yt-dlp
+
+# Или с правами администратора:
+pip install --upgrade yt-dlp
+
+# Linux альтернатива:
+sudo pip3 install yt-dlp
+3. ffmpeg (для обработки видео/аудио)
+Windows:
+
+Скачать с https://ffmpeg.org/download.html
+Выбрать "Windows builds from gyan.dev"
+Скачать "ffmpeg-release-essentials.zip"
+Распаковать в папку (например, C:\ffmpeg)
+Добавить в PATH:
+
+Открыть "Переменные среды"
+Добавить путь C:\ffmpeg\bin в переменную PATH
+
+
+
+Linux (Ubuntu/Debian):
+bashsudo apt update
+sudo apt install ffmpeg
+Linux (Fedora/CentOS/RHEL):
+bashsudo yum install ffmpeg
+# или
+sudo dnf install ffmpeg
+Mac:
+bashbrew install ffmpeg
+4. Streamlink (опционально, для некоторых стриминговых платформ)
+bashpip install streamlink
+
+# Linux:
+sudo pip3 install streamlink
+✅ Проверка установки:
+После установки проверьте, что всё работает:
+bash# Проверка yt-dlp
+yt-dlp --version
+
+# Проверка ffmpeg
+ffmpeg -version
+
+# Проверка streamlink (опционально)
+streamlink --version
+
+# Проверка Python и tkinter
+python --version
+python -m tkinter
+🎯 Минимальный набор для работы:
+Если хотите только базовую функциональность:
+
+Python 3.7+ (с tkinter)
+yt-dlp
+ffmpeg
+
+Программа сама проверит при запуске, чего не хватает, и покажет красными жирными буквами подробные инструкции по установке недостающих компонентов!
+💡 Быстрая установка (все сразу):
+Windows:
+bashpip install yt-dlp streamlink
+# + скачать ffmpeg вручную
+Linux:
+bashsudo apt update
+sudo apt install python3-tk ffmpeg
+pip3 install yt-dlp streamlink
+Mac:
+bashbrew install ffmpeg
+pip3 install yt-dlp streamlink
+После этого просто запустите программу - она сама проверит, всё ли установлено правильно! 🚀

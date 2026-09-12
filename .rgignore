@@ -1,0 +1,19 @@
+# Runtime/user data: не засорять обычный поиск Codex.
+**/__pycache__/
+*.pyc
+*.pyo
+*.log
+Логи скачивания/
+История ссылок/
+Ссылки на скачивания/
+Настройки/
+Обработать вручную/
+Видео/
+Разбивка аудио/
+Логи проблем/Сессии/
+Логи проблем/active_run_state.json
+Логи проблем/latest_run.json
+Логи проблем/latest_session.json
+Логи проблем/latest_unresolved_problem.json
+Логи проблем/health_history.jsonl
+Логи проблем/emergency_problem_log.jsonl

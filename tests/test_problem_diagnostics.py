@@ -1,6 +1,6 @@
-import importlib.util
 import json
 import logging
+import os
 import tempfile
 import threading
 import time
@@ -11,124 +11,15 @@ from datetime import datetime
 from pathlib import Path
 from unittest import mock
 
-
-PROJECT_DIR = Path(__file__).resolve().parents[1]
-MAIN_FILE = next(
-    path for path in PROJECT_DIR.glob("*.py")
-    if path.name not in {"problem_log_validator.py"}
+from src.application import VideoDownloader
+from src.core.concurrency import SafeCounter, ThreadSafeList
+from src.core.constants import (
+    YT_DLP_ADAPTIVE_PRIMARY_FAILURE_THRESHOLD,
+    YT_DLP_SLOW_NETWORK_FAILURE_SEC,
 )
-SPEC = importlib.util.spec_from_file_location(
-    "skachat_video_online_diagnostics_test", MAIN_FILE
-)
-MODULE = importlib.util.module_from_spec(SPEC)
-assert SPEC.loader is not None
-SPEC.loader.exec_module(MODULE)
 
 
-class BoolVarStub:
-    def get(self):
-        return True
-
-
-def make_diagnostic_app(root: Path):
-    app = MODULE.VideoDownloader.__new__(MODULE.VideoDownloader)
-    problem_root = root / "problem_logs"
-    session_dir = problem_root / "sessions" / "2026-08-03_12-00-00_pid1"
-    paths = {
-        "app_dir": root,
-        "problem_log_dir": problem_root,
-        "problem_sessions_dir": problem_root / "sessions",
-        "problem_session_dir": session_dir,
-        "problem_log_file": session_dir / "ai_problem_log.jsonl",
-        "problem_events_file": session_dir / "events.jsonl",
-        "problem_session_log_file": session_dir / "ai_problem_log.jsonl",
-        "problem_report_file": session_dir / "problem_report.txt",
-        "problem_latest_json_file": session_dir / "latest_problem_snapshot.json",
-        "problem_session_summary_file": session_dir / "session_summary.json",
-        "problem_session_summary_md_file": session_dir / "session_summary.md",
-        "problem_incidents_file": session_dir / "incidents.jsonl",
-        "problem_manifest_file": session_dir / "manifest.json",
-        "problem_validation_report_file": session_dir / "validation_report.json",
-        "problem_attachments_dir": session_dir / "attachments",
-        "problem_session_active_state_file": session_dir / "active_run_state.json",
-        "problem_latest_session_index_file": problem_root / "latest_session.json",
-        "problem_latest_run_index_file": problem_root / "latest_run.json",
-        "problem_latest_unresolved_index_file": (
-            problem_root / "latest_unresolved_problem.json"
-        ),
-        "problem_active_run_state_file": problem_root / "active_run_state.json",
-        "problem_health_history_file": problem_root / "health_history.jsonl",
-        "problem_readme_file": problem_root / "README_FOR_CODEX.md",
-        "problem_schema_file": problem_root / "log_schema.json",
-        "problem_emergency_log_file": problem_root / "emergency_problem_log.jsonl",
-        "problem_debug_session_log_file": session_dir / "app_debug.log",
-        "debug_session_log_file": root / "debug.log",
-        "settings_file": root / "settings.json",
-        "log_dir": root / "logs",
-        "download_links_dir": root / "links",
-        "manual_processing_dir": root / "manual",
-    }
-    state = {
-        "problem_log_lock": threading.Lock(),
-        "problem_atomic_write_lock": threading.RLock(),
-        "problem_jsonl_write_lock": threading.RLock(),
-        "problem_log_session_id": "diagnostic-test",
-        "problem_log_sequence": 0,
-        "problem_unresolved_entries": {},
-        "problem_resolution_count": 0,
-        "problem_last_resolution": None,
-        "problem_log_environment_snapshot": {"test": True},
-        "problem_incident_records": {},
-        "problem_signature_counts": Counter(),
-        "problem_error_signature_counts": Counter(),
-        "problem_level_counts": Counter(),
-        "problem_operation_counts": Counter(),
-        "problem_strategy_metrics": {},
-        "problem_duration_samples": [],
-        "problem_full_detail_count": 0,
-        "problem_suppressed_detail_count": 0,
-        "problem_unique_attachment_blob_count": 0,
-        "problem_reused_attachment_blob_count": 0,
-        "problem_schema_validation_failures": 0,
-        "problem_last_disk_validation_status": None,
-        "problem_health_written_keys": set(),
-        "problem_last_completion_context": {},
-        "problem_last_event_id": None,
-        "problem_last_event_by_task": {},
-        "problem_runtime_started_at": "2026-08-03T12:00:00",
-        "problem_runtime_started_unix": time.time(),
-        "problem_runtime_terminal": False,
-        "problem_previous_active_state": None,
-        "problem_logging_enabled": True,
-        "settings": {"write_problem_logs": True, "api_token": "TOPSECRET"},
-        "write_problem_logs": BoolVarStub(),
-        "current_session_start": "2026-08-03 12:00:00",
-        "current_history_session_file": None,
-        "current_download_log_session_file": None,
-        "current_session_download_count": 0,
-        "download_start_time": time.time(),
-        "is_downloading": True,
-        "cancel_flag": threading.Event(),
-        "active_processes": {},
-        "process_lock": threading.Lock(),
-        "ytdlp_runtime": {},
-        "ytdlp_runtime_lock": threading.Lock(),
-        "download_threads": MODULE.ThreadSafeList(),
-        "downloaded_url_hashes": set(),
-        "downloaded_video_ids": set(),
-        "total_files": MODULE.SafeCounter(2),
-        "completed_files": MODULE.SafeCounter(0),
-        "max_concurrent": 2,
-        "file_logger": logging.getLogger("problem-diagnostics-test"),
-        "subprocess_flags": 0,
-        "problem_exception_hook_lock": threading.Lock(),
-        "retention_cleanup_errors": [],
-    }
-    for key, value in {**paths, **state}.items():
-        setattr(app, key, value)
-    app.ensure_problem_log_dirs()
-    app._write_problem_format_files()
-    return app
+from tests.support.problem_diagnostics_fixture import make_diagnostic_app
 
 
 class ProblemDiagnosticsTests(unittest.TestCase):
@@ -136,7 +27,7 @@ class ProblemDiagnosticsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             app = make_diagnostic_app(Path(temp_dir))
             target = Path(temp_dir) / "atomic.json"
-            real_replace = MODULE.os.replace
+            real_replace = os.replace
             calls = []
 
             def flaky_replace(source, destination):
@@ -145,13 +36,56 @@ class ProblemDiagnosticsTests(unittest.TestCase):
                     raise PermissionError(5, "Access denied")
                 return real_replace(source, destination)
 
-            with mock.patch.object(MODULE.os, "replace", side_effect=flaky_replace):
+            with mock.patch.object(os, "replace", side_effect=flaky_replace):
                 app._atomic_write_json_file(target, {"ok": True})
 
             self.assertEqual(len(calls), 3)
             self.assertEqual(
                 json.loads(target.read_text(encoding="utf-8")), {"ok": True}
             )
+
+    def test_problem_event_refreshes_live_summary_immediately(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            app = make_diagnostic_app(Path(temp_dir))
+            app.record_problem(
+                "yt-dlp postprocessing failed",
+                "ERROR",
+                "yt_dlp_download_attempt",
+                {
+                    "url": "https://www.youtube.com/watch?v=abcdefghijk",
+                    "strategy": "direct-1080p",
+                    "failure_analysis": {
+                        "kind": "ffmpeg_timestamp_mux_failure",
+                        "stage": "postprocessing_merge",
+                    },
+                },
+                RuntimeError("Conversion failed"),
+                stderr="ERROR: Postprocessing: Conversion failed!",
+            )
+
+            summary = json.loads(
+                app.problem_session_summary_file.read_text(encoding="utf-8")
+            )
+            latest = json.loads(
+                app.problem_latest_run_index_file.read_text(encoding="utf-8")
+            )
+            events = [
+                json.loads(line)
+                for line in app.problem_events_file.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+
+            self.assertEqual(len(events), 1)
+            self.assertEqual(summary["status"], "running")
+            self.assertTrue(summary["live_refresh"])
+            self.assertEqual(summary["event_count"], 1)
+            self.assertEqual(summary["event_counts"]["ERROR"], 1)
+            self.assertEqual(summary["structured_error_count"], 1)
+            self.assertEqual(summary["error_count"], 1)
+            self.assertEqual(summary["disk_validation_status"], "deferred_live")
+            self.assertEqual(summary["last_event_id"], events[0]["event_id"])
+            self.assertEqual(latest["structured_error_count"], 1)
+            self.assertEqual(latest["error_count"], 1)
 
     def test_finished_summary_preserves_completion_counts_and_one_health_row(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -239,8 +173,44 @@ class ProblemDiagnosticsTests(unittest.TestCase):
                 "youtube_http_403",
             )
 
+    def test_postprocessing_conversion_has_canonical_code_and_media_hint(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            app = make_diagnostic_app(Path(temp_dir))
+            terminal = "ERROR: Postprocessing: Conversion failed!"
+            self.assertEqual(
+                app._canonical_problem_error_code(terminal),
+                "yt_dlp_postprocessing_conversion_failed",
+            )
+            hint = app._ai_debug_hint_for_problem_log(
+                "yt_dlp_download_attempt",
+                "yt-dlp вернул ненулевой код",
+                "",
+                None,
+                terminal,
+                {
+                    "failure_analysis": {
+                        "stage": "postprocessing_merge",
+                        "format_profile": "any",
+                    }
+                },
+            )
+            self.assertEqual(hint["category"], "media_validation_or_conversion")
+            self.assertEqual(
+                hint["error_code"], "yt_dlp_postprocessing_conversion_failed"
+            )
+            self.assertTrue(any("failure_analysis" in item for item in hint["next_checks"]))
+
+    def test_ffmpeg_unknown_timestamp_has_specific_canonical_code(self):
+        app = VideoDownloader.__new__(VideoDownloader)
+        self.assertEqual(
+            app._canonical_problem_error_code(
+                "Timestamps are unset in a packet; Can't write packet with unknown timestamp"
+            ),
+            "ffmpeg_timestamp_mux_failure",
+        )
+
     def test_strategy_findings_include_bad_strategy_and_effective_fallback(self):
-        app = MODULE.VideoDownloader.__new__(MODULE.VideoDownloader)
+        app = VideoDownloader.__new__(VideoDownloader)
         findings = app._problem_strategy_findings({
             "blocked": {
                 "attempts": 6,
@@ -266,10 +236,10 @@ class ProblemDiagnosticsTests(unittest.TestCase):
         self.assertIn("восстановил 5", findings[1]["message"])
 
     def test_adaptive_order_promotes_both_android_strategies_and_logs_order(self):
-        app = MODULE.VideoDownloader.__new__(MODULE.VideoDownloader)
+        app = VideoDownloader.__new__(VideoDownloader)
         app.youtube_strategy_state_lock = threading.Lock()
         app.youtube_primary_auth_failure_count = (
-            MODULE.YT_DLP_ADAPTIVE_PRIMARY_FAILURE_THRESHOLD
+            YT_DLP_ADAPTIVE_PRIMARY_FAILURE_THRESHOLD
         )
         app.youtube_adaptive_strategy_logged = False
         ui_messages = []
@@ -292,9 +262,9 @@ class ProblemDiagnosticsTests(unittest.TestCase):
             [item["name"] for item in reordered[:4]],
             [
                 "Android Client small chunks",
-                "Android Progressive MP4 early",
                 "EJS GitHub stable auto quality",
                 "Early progressive MP4 no force IPv4",
+                "Android Progressive MP4 early",
             ],
         )
         self.assertTrue(ui_messages)
@@ -304,10 +274,10 @@ class ProblemDiagnosticsTests(unittest.TestCase):
         )
 
     def test_network_failure_counts_include_current_attempt(self):
-        app = MODULE.VideoDownloader.__new__(MODULE.VideoDownloader)
+        app = VideoDownloader.__new__(VideoDownloader)
         counts = app._updated_youtube_network_failure_counts(
             "Connection to googlevideo.com timed out",
-            MODULE.YT_DLP_SLOW_NETWORK_FAILURE_SEC + 1,
+            YT_DLP_SLOW_NETWORK_FAILURE_SEC + 1,
             0,
             0,
         )
@@ -435,7 +405,7 @@ class ProblemDiagnosticsTests(unittest.TestCase):
     def test_old_session_archive_is_verified_before_sources_are_removed(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            app = MODULE.VideoDownloader.__new__(MODULE.VideoDownloader)
+            app = VideoDownloader.__new__(VideoDownloader)
             app.problem_sessions_dir = root / "sessions"
             app.problem_session_dir = app.problem_sessions_dir / (
                 "2026-08-03_12-00-00_pid999"

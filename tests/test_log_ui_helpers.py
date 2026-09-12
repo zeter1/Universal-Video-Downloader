@@ -1,18 +1,17 @@
-import importlib.util
 import logging
 import threading
 from types import SimpleNamespace
 import unittest
 from unittest import mock
-from pathlib import Path
 
-
-PROJECT_DIR = Path(__file__).resolve().parents[1]
-MAIN_FILE = PROJECT_DIR / "video_downloader.py"
-SPEC = importlib.util.spec_from_file_location("video_downloader_log_ui_test", MAIN_FILE)
-MODULE = importlib.util.module_from_spec(SPEC)
-assert SPEC.loader is not None
-SPEC.loader.exec_module(MODULE)
+from src.application import VideoDownloader
+from src.core.constants import (
+    LOG_CATEGORY_DOWNLOAD_FAILED, LOG_TAB_ALL, LOG_TAB_DOWNLOAD_FAILED, LOG_TAB_ERRORS,
+)
+from src.ui import log_view as log_view_module
+from src.ui.helpers import (
+    find_clickable_urls, is_copy_shortcut, is_paste_shortcut, log_tabs_for_entry,
+)
 
 
 class FakeLogWidget:
@@ -58,7 +57,7 @@ class LogUiHelperTests(unittest.TestCase):
             "зеркало https://youtu.be/xyz987."
         )
 
-        found = MODULE.find_clickable_urls(text)
+        found = find_clickable_urls(text)
 
         self.assertEqual(
             [url for _start, _end, url in found],
@@ -73,48 +72,48 @@ class LogUiHelperTests(unittest.TestCase):
     def test_keeps_balanced_parenthesis_inside_url(self):
         text = "Ссылка (https://example.com/wiki/Test_(video))."
         self.assertEqual(
-            MODULE.find_clickable_urls(text)[0][2],
+            find_clickable_urls(text)[0][2],
             "https://example.com/wiki/Test_(video)",
         )
 
     def test_download_failure_and_error_tabs_are_independent(self):
         self.assertEqual(
-            MODULE.log_tabs_for_entry(
-                "WARNING", MODULE.LOG_CATEGORY_DOWNLOAD_FAILED
+            log_tabs_for_entry(
+                "WARNING", LOG_CATEGORY_DOWNLOAD_FAILED
             ),
-            (MODULE.LOG_TAB_ALL, MODULE.LOG_TAB_DOWNLOAD_FAILED),
+            (LOG_TAB_ALL, LOG_TAB_DOWNLOAD_FAILED),
         )
         self.assertEqual(
-            MODULE.log_tabs_for_entry(
-                "ERROR", MODULE.LOG_CATEGORY_DOWNLOAD_FAILED
+            log_tabs_for_entry(
+                "ERROR", LOG_CATEGORY_DOWNLOAD_FAILED
             ),
             (
-                MODULE.LOG_TAB_ALL,
-                MODULE.LOG_TAB_DOWNLOAD_FAILED,
-                MODULE.LOG_TAB_ERRORS,
+                LOG_TAB_ALL,
+                LOG_TAB_DOWNLOAD_FAILED,
+                LOG_TAB_ERRORS,
             ),
         )
         self.assertEqual(
-            MODULE.log_tabs_for_entry("ERROR", None),
-            (MODULE.LOG_TAB_ALL, MODULE.LOG_TAB_ERRORS),
+            log_tabs_for_entry("ERROR", None),
+            (LOG_TAB_ALL, LOG_TAB_ERRORS),
         )
 
     def test_copy_shortcut_supports_english_and_russian_layouts(self):
-        self.assertTrue(MODULE.is_copy_shortcut("c", 67))
-        self.assertTrue(MODULE.is_copy_shortcut("Cyrillic_es", 0))
-        self.assertTrue(MODULE.is_copy_shortcut("с", 0))
-        self.assertTrue(MODULE.is_copy_shortcut("unknown", 67))
-        self.assertFalse(MODULE.is_copy_shortcut("v", 86))
+        self.assertTrue(is_copy_shortcut("c", 67))
+        self.assertTrue(is_copy_shortcut("Cyrillic_es", 0))
+        self.assertTrue(is_copy_shortcut("с", 0))
+        self.assertTrue(is_copy_shortcut("unknown", 67))
+        self.assertFalse(is_copy_shortcut("v", 86))
 
     def test_paste_shortcut_supports_english_and_russian_layouts(self):
-        self.assertTrue(MODULE.is_paste_shortcut("v", 86))
-        self.assertTrue(MODULE.is_paste_shortcut("Cyrillic_em", 0))
-        self.assertTrue(MODULE.is_paste_shortcut("м", 0))
-        self.assertTrue(MODULE.is_paste_shortcut("unknown", 86))
-        self.assertFalse(MODULE.is_paste_shortcut("c", 67))
+        self.assertTrue(is_paste_shortcut("v", 86))
+        self.assertTrue(is_paste_shortcut("Cyrillic_em", 0))
+        self.assertTrue(is_paste_shortcut("м", 0))
+        self.assertTrue(is_paste_shortcut("unknown", 86))
+        self.assertFalse(is_paste_shortcut("c", 67))
 
     def test_russian_paste_shortcut_generates_one_standard_paste_event(self):
-        app = MODULE.VideoDownloader.__new__(MODULE.VideoDownloader)
+        app = VideoDownloader.__new__(VideoDownloader)
         widget = mock.Mock()
         event = SimpleNamespace(widget=widget, keysym="Cyrillic_em", keycode=0)
 
@@ -124,7 +123,7 @@ class LogUiHelperTests(unittest.TestCase):
         widget.event_generate.assert_called_once_with("<<Paste>>")
 
     def test_unrelated_control_shortcut_is_not_intercepted(self):
-        app = MODULE.VideoDownloader.__new__(MODULE.VideoDownloader)
+        app = VideoDownloader.__new__(VideoDownloader)
         widget = mock.Mock()
         event = SimpleNamespace(widget=widget, keysym="a", keycode=65)
 
@@ -134,7 +133,7 @@ class LogUiHelperTests(unittest.TestCase):
         widget.event_generate.assert_not_called()
 
     def test_russian_copy_shortcut_copies_selected_log_text(self):
-        app = MODULE.VideoDownloader.__new__(MODULE.VideoDownloader)
+        app = VideoDownloader.__new__(VideoDownloader)
         app.root = FakeClipboardRoot()
         widget = SimpleNamespace(get=lambda _start, _end: "выделенный текст")
         event = SimpleNamespace(widget=widget, keysym="Cyrillic_es", keycode=0)
@@ -145,11 +144,11 @@ class LogUiHelperTests(unittest.TestCase):
         self.assertEqual(app.root.clipboard, "выделенный текст")
 
     def test_failed_error_is_routed_to_all_three_tabs_with_full_url_tag(self):
-        app = MODULE.VideoDownloader.__new__(MODULE.VideoDownloader)
+        app = VideoDownloader.__new__(VideoDownloader)
         widgets = {
-            MODULE.LOG_TAB_ALL: FakeLogWidget(),
-            MODULE.LOG_TAB_DOWNLOAD_FAILED: FakeLogWidget(),
-            MODULE.LOG_TAB_ERRORS: FakeLogWidget(),
+            LOG_TAB_ALL: FakeLogWidget(),
+            LOG_TAB_DOWNLOAD_FAILED: FakeLogWidget(),
+            LOG_TAB_ERRORS: FakeLogWidget(),
         }
         url = "https://www.youtube.com/watch?v=full-id&list=full-list"
         message = f"[12:00:00] ❌ Не удалось скачать: {url}"
@@ -159,12 +158,12 @@ class LogUiHelperTests(unittest.TestCase):
                 message,
                 "ERROR",
                 False,
-                MODULE.LOG_CATEGORY_DOWNLOAD_FAILED,
+                LOG_CATEGORY_DOWNLOAD_FAILED,
             )
         ]
         app._log_flush_pending = True
         app.log_text_widgets = widgets
-        app.log_text = widgets[MODULE.LOG_TAB_ALL]
+        app.log_text = widgets[LOG_TAB_ALL]
         app.file_logger = logging.getLogger("log-ui-routing-test")
 
         app._flush_log_queue()
@@ -175,7 +174,7 @@ class LogUiHelperTests(unittest.TestCase):
             self.assertIn((url, ("ERROR", "URL_LINK")), widget.insert_calls)
 
     def test_clicking_url_tag_opens_exact_full_url(self):
-        app = MODULE.VideoDownloader.__new__(MODULE.VideoDownloader)
+        app = VideoDownloader.__new__(VideoDownloader)
         url = "https://youtu.be/full-video-id?list=full-list-id"
         positions = {"1.10": 10, "1.15": 15, "1.60": 60}
         widget = SimpleNamespace(
@@ -190,7 +189,7 @@ class LogUiHelperTests(unittest.TestCase):
         )
         event = SimpleNamespace(widget=widget, x=10, y=10)
 
-        with mock.patch.object(MODULE.webbrowser, "open_new_tab") as open_url:
+        with mock.patch.object(log_view_module.webbrowser, "open_new_tab") as open_url:
             result = app._open_url_at_event(event)
 
         self.assertEqual(result, "break")
