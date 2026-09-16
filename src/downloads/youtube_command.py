@@ -21,8 +21,10 @@ def video_format_args(
 
     Recent YouTube HLS formats can download successfully and then fail in FFmpeg
     while merging into MKV because packet timestamps are missing. The normal
-    high-quality profile therefore prefers direct HTTP/DASH formats. Riskier
-    any-protocol formats remain available only in explicit fallback strategies.
+    high-quality profile therefore prefers direct HTTP/DASH formats. A ready
+    single-file stream at the target height is preferred before split streams;
+    lower progressive formats must not displace a higher-resolution split pair.
+    Riskier any-protocol formats remain available only in explicit fallbacks.
     """
     profile = str(format_profile or "").strip().lower()
     if progressive:
@@ -38,9 +40,12 @@ def video_format_args(
             f"best[height<={VIDEO_MAX_HEIGHT}]"
         )
     else:
-        # 1080p-first without HLS/MPEG-TS: separate direct video+audio is still
-        # allowed, so 1080p remains the target instead of dropping to 720p.
+        # Prefer a ready single-file stream when it already reaches the target
+        # height. Otherwise keep 1080p-first behavior with separate direct
+        # video+audio, instead of letting (for example) a combined 360p stream
+        # displace an available 1080p pair.
         selector = (
+            f"best[height={VIDEO_MAX_HEIGHT}][protocol^=http][protocol!*=dash]/"
             f"bestvideo[height<={VIDEO_MAX_HEIGHT}][protocol^=http][protocol!*=dash]+"
             f"bestaudio[protocol^=http][protocol!*=dash]/"
             f"best[height<={VIDEO_MAX_HEIGHT}][protocol^=http][protocol!*=dash]"
