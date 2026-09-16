@@ -1,3 +1,5 @@
+**Язык / Language:** **Русский** · [English](README_EN.md)
+
 # Universal Video Downloader
 
 **Universal Video Downloader** — Windows-приложение на Python/Tkinter для загрузки видео с сайтов, поддерживаемых `yt-dlp`. Программа ориентирована на удобный итоговый файл: для видео используется MP4 с качеством до **1080p**, а аудио при необходимости можно сохранить в MP3.
@@ -107,6 +109,23 @@ python scripts/codex_scope.py "описание задачи"
 ```bash
 python scripts/check_codex_efficiency.py
 ```
+
+## Проверка проекта
+
+CI выполняет компиляцию Python-кода и полный набор offline regression tests. Локально тот же базовый уровень можно проверить так:
+
+```powershell
+python -m compileall -q video_downloader.py problem_log_validator.py src scripts tests
+python -m unittest discover -s tests -v
+```
+
+Эти проверки не заменяют реальное скачивание с конкретного сайта: доступность сайтов и форматов зависит от внешних сервисов и текущей версии `yt-dlp`.
+
+## Поддержка и безопасность
+
+- [`SUPPORT.md`](SUPPORT.md) — какие данные приложить к сообщению об ошибке;
+- [GitHub Issues](https://github.com/zeter1/Universal-Video-Downloader/issues) — обычные баги и воспроизводимые проблемы;
+- [`SECURITY.md`](SECURITY.md) — сообщения о потенциальных уязвимостях.
 
 ## Важное замечание
 
