@@ -117,17 +117,44 @@ class LogUiHelperTests(unittest.TestCase):
         widget = mock.Mock()
         event = SimpleNamespace(widget=widget, keysym="Cyrillic_em", keycode=0)
 
-        result = app._on_url_paste_shortcut(event)
+        result = app._on_url_clipboard_shortcut(event)
 
         self.assertEqual(result, "break")
         widget.event_generate.assert_called_once_with("<<Paste>>")
+
+    def test_russian_copy_shortcut_generates_one_standard_copy_event(self):
+        app = VideoDownloader.__new__(VideoDownloader)
+        widget = mock.Mock()
+        event = SimpleNamespace(widget=widget, keysym="Cyrillic_es", keycode=0)
+
+        result = app._on_url_clipboard_shortcut(event)
+
+        self.assertEqual(result, "break")
+        widget.event_generate.assert_called_once_with("<<Copy>>")
+
+    def test_windows_keycodes_work_even_if_tk_keysym_is_unexpected(self):
+        app = VideoDownloader.__new__(VideoDownloader)
+        copy_widget = mock.Mock()
+        paste_widget = mock.Mock()
+
+        copy_result = app._on_url_clipboard_shortcut(
+            SimpleNamespace(widget=copy_widget, keysym="unknown", keycode=67)
+        )
+        paste_result = app._on_url_clipboard_shortcut(
+            SimpleNamespace(widget=paste_widget, keysym="unknown", keycode=86)
+        )
+
+        self.assertEqual(copy_result, "break")
+        self.assertEqual(paste_result, "break")
+        copy_widget.event_generate.assert_called_once_with("<<Copy>>")
+        paste_widget.event_generate.assert_called_once_with("<<Paste>>")
 
     def test_unrelated_control_shortcut_is_not_intercepted(self):
         app = VideoDownloader.__new__(VideoDownloader)
         widget = mock.Mock()
         event = SimpleNamespace(widget=widget, keysym="a", keycode=65)
 
-        result = app._on_url_paste_shortcut(event)
+        result = app._on_url_clipboard_shortcut(event)
 
         self.assertIsNone(result)
         widget.event_generate.assert_not_called()
