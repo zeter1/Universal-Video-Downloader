@@ -6,7 +6,7 @@
 from tkinter import messagebox
 import tkinter as tk
 
-from src.ui.helpers import is_paste_shortcut
+from src.ui.helpers import is_copy_shortcut, is_paste_shortcut
 
 
 class ClipboardMixin:
@@ -55,14 +55,20 @@ class ClipboardMixin:
             pass
 
 
-    def _on_url_paste_shortcut(self, event):
-        if not is_paste_shortcut(
-                getattr(event, "keysym", ""), getattr(event, "keycode", None)):
-            return None
-        # Используем штатную виртуальную вставку Tk: она правильно заменяет
-        # выделенный текст и сохраняет обычное поведение Ctrl+V.
-        event.widget.event_generate("<<Paste>>")
-        return "break"
+    def _on_url_clipboard_shortcut(self, event):
+        keysym = getattr(event, "keysym", "")
+        keycode = getattr(event, "keycode", None)
+
+        # Физические C/V на Windows имеют одинаковые keycode независимо от
+        # активной EN/RU раскладки; keysym дополнительно покрывает Tk/Linux.
+        if is_copy_shortcut(keysym, keycode):
+            event.widget.event_generate("<<Copy>>")
+            return "break"
+        if is_paste_shortcut(keysym, keycode):
+            # Штатная виртуальная вставка Tk корректно заменяет выделение.
+            event.widget.event_generate("<<Paste>>")
+            return "break"
+        return None
 
 
     def delete_text(self) -> None:
