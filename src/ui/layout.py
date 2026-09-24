@@ -68,7 +68,7 @@ class UILayoutMixin:
         self.context_menu.add_command(label="Копировать", command=self.copy_text)
         self.context_menu.add_command(label="Вставить",   command=self.paste_text)
         self.context_menu.add_command(label="Удалить",    command=self.delete_text)
-        self.url_text.bind("<Control-KeyPress>", self._on_url_paste_shortcut)
+        self.url_text.bind("<Control-KeyPress>", self._on_url_clipboard_shortcut)
         self.url_text.bind("<Button-3>", self.show_context_menu)
 
         # ── Список видео из HTML ──

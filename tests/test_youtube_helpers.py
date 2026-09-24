@@ -1,9 +1,15 @@
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 
 from src.downloads.youtube_strategy_catalog import build_ytdlp_strategy_plan
-from src.downloads.youtube_command import video_format_args
+from src.downloads.youtube_command import (
+    _with_youtube_language_preference,
+    build_ytdlp_download_command,
+    video_format_args,
+)
 from src.downloads.youtube_failure_diagnostics import (
     analyze_yt_dlp_failure,
     diagnostic_landmarks_from_output,
@@ -41,6 +47,18 @@ class _FakeYouTubeStrategyApp:
         return strategies
 
 
+class _FakeCommandApp:
+    settings = {"download_subtitles": False}
+
+    @staticmethod
+    def is_youtube_url(url):
+        return "youtube.com" in url or "youtu.be" in url
+
+    @staticmethod
+    def build_youtube_ejs_args(_url, _mode):
+        return []
+
+
 class YouTubeStrategyCatalogTests(unittest.TestCase):
     @patch("src.downloads.youtube_strategy_catalog.shutil.which", return_value=r"C:\\tools\\aria2c.exe")
     def test_youtube_strategy_plan_with_aria2c_does_not_reference_missing_self(self, _which):
@@ -60,25 +78,103 @@ class YouTubeStrategyCatalogTests(unittest.TestCase):
 
 
 class YouTubeFormatSelectionTests(unittest.TestCase):
+    def test_language_neutral_selector_keeps_ready_1080p_before_split_formats(self):
+        selector = video_format_args()[1]
+        ready = "best[height=1080][protocol^=http][protocol!*=dash]"
+        split = (
+            "bestvideo[height<=1080][protocol^=http][protocol!*=dash]+"
+            "bestaudio[protocol^=http][protocol!*=dash]"
+        )
+        self.assertTrue(selector.startswith(ready + "/"))
+        self.assertLess(selector.index(ready), selector.index(split))
+
+    def test_youtube_russian_ready_1080p_is_first_when_available(self):
+        selector = video_format_args(preferred_audio_language="ru")[1]
+        self.assertTrue(selector.startswith(
+            "best[height=1080][language^=ru][protocol^=http][protocol!*=dash]/"
+        ))
+
     def test_default_1080p_selector_prefers_direct_http_dash(self):
-        args = video_format_args()
+        args = video_format_args(preferred_audio_language="ru")
         selector = args[args.index("-f") + 1]
         self.assertIn("bestvideo[height<=1080][protocol^=http][protocol!*=dash]", selector)
+        self.assertIn("bestaudio[language^=ru][protocol^=http][protocol!*=dash]", selector)
         self.assertIn("bestaudio[protocol^=http][protocol!*=dash]", selector)
         self.assertNotIn("bestvideo*[height<=1080]+bestaudio", selector)
 
+    def test_russian_audio_falls_back_to_any_audio_instead_of_failing(self):
+        selector = video_format_args(preferred_audio_language="ru")[1]
+        russian = "bestaudio[language^=ru][protocol^=http][protocol!*=dash]"
+        fallback = "bestaudio[protocol^=http][protocol!*=dash]"
+        self.assertLess(selector.index(russian), selector.index(fallback))
+
+    def test_youtube_language_preference_preserves_player_client(self):
+        args = _with_youtube_language_preference([
+            "--extractor-args", "youtube:player_client=android"
+        ])
+        self.assertEqual(
+            args,
+            ["--extractor-args", "youtube:player_client=android;lang=ru"],
+        )
+
+    def test_youtube_language_preference_is_added_when_strategy_has_none(self):
+        self.assertEqual(
+            _with_youtube_language_preference(["--cookies-from-browser", "chrome"]),
+            ["--cookies-from-browser", "chrome", "--extractor-args", "youtube:lang=ru"],
+        )
+
     def test_any_protocol_selector_is_reserved_for_explicit_fallback(self):
-        selector = video_format_args(fallback_any=True)[1]
+        selector = video_format_args(fallback_any=True, preferred_audio_language="ru")[1]
+        self.assertIn("bestvideo*[height<=1080]+bestaudio[language^=ru]", selector)
         self.assertIn("bestvideo*[height<=1080]+bestaudio", selector)
 
     def test_progressive_prefers_single_file_http(self):
-        selector = video_format_args(progressive=True)[1]
-        self.assertTrue(selector.startswith("best[height<=1080][protocol^=http][protocol!*=dash]/"))
+        selector = video_format_args(progressive=True, preferred_audio_language="ru")[1]
+        self.assertTrue(selector.startswith(
+            "best[height<=1080][language^=ru][protocol^=http][protocol!*=dash]/"
+        ))
 
-    def test_same_height_prefers_mp4_video_and_m4a_audio(self):
-        args = video_format_args()
+    def test_youtube_sort_prefers_language_before_container_and_bitrate(self):
+        args = video_format_args(preferred_audio_language="ru")
         sort_order = args[args.index("-S") + 1]
+        self.assertTrue(sort_order.startswith("height,lang,vext,aext,"))
+
+    def test_non_youtube_selector_keeps_historical_language_neutral_behavior(self):
+        args = video_format_args()
+        selector = args[args.index("-f") + 1]
+        sort_order = args[args.index("-S") + 1]
+        self.assertNotIn("language^=", selector)
         self.assertTrue(sort_order.startswith("height,vext,aext,"))
+
+    def test_download_command_applies_russian_preference_only_to_youtube(self):
+        app = _FakeCommandApp()
+        strategy = {
+            "args": ["--extractor-args", "youtube:player_client=android"],
+            "network_args": [],
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            youtube_cmd = build_ytdlp_download_command(
+                app,
+                "https://www.youtube.com/watch?v=test",
+                strategy,
+                [],
+                Path(temp_dir),
+                [],
+            )[0]
+            other_cmd = build_ytdlp_download_command(
+                app,
+                "https://example.com/video",
+                {"args": [], "network_args": []},
+                [],
+                Path(temp_dir),
+                [],
+            )[0]
+
+        yt_extractor_value = youtube_cmd[youtube_cmd.index("--extractor-args") + 1]
+        self.assertEqual(yt_extractor_value, "youtube:player_client=android;lang=ru")
+        self.assertIn("language^=ru", youtube_cmd[youtube_cmd.index("-f") + 1])
+        self.assertNotIn("language^=", other_cmd[other_cmd.index("-f") + 1])
+        self.assertNotIn("--extractor-args", other_cmd)
 
 
 class YouTubeFailureDiagnosticsTests(unittest.TestCase):
