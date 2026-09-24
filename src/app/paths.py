@@ -8,11 +8,33 @@ from typing import List
 from pathlib import Path
 from datetime import datetime
 import os
+import sys
+
+
+def get_program_dir() -> Path:
+    """Writable application directory; next to the EXE when packaged."""
+    try:
+        if getattr(sys, "frozen", False):
+            return Path(sys.executable).resolve().parent
+        return Path(__file__).resolve().parents[2]
+    except Exception:
+        return Path.cwd()
+
+
+def get_runtime_bin_dir() -> Path:
+    """Directory containing binaries bundled by PyInstaller at runtime."""
+    try:
+        bundle_dir = getattr(sys, "_MEIPASS", None)
+        if getattr(sys, "frozen", False) and bundle_dir:
+            return Path(bundle_dir).resolve()
+    except Exception:
+        pass
+    return get_program_dir()
 
 
 def initialize_app_paths(app) -> None:
     """Создать все пути приложения и выполнить безопасные legacy-миграции."""
-    app.app_dir = Path(__file__).resolve().parents[2]
+    app.app_dir = get_program_dir()
     app.settings_file = app.app_dir / "Настройки" / "settings.json"
     app.log_dir = app.app_dir / "Логи скачивания"
     app.log_file = app.log_dir / "download_log.txt"
