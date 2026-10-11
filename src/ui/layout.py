@@ -140,10 +140,12 @@ class UILayoutMixin:
         self.save_path = tk.StringVar(
             value=self.settings.get("save_path", str(Path.home() / "Downloads"))
         )
-        ttk.Entry(path_frame, textvariable=self.save_path, width=55).pack(
+        self.save_path_entry = ttk.Entry(path_frame, textvariable=self.save_path, width=55)
+        self.save_path_entry.pack(
             side=tk.LEFT, padx=5, fill=tk.X, expand=True
         )
-        ttk.Button(path_frame, text="Обзор", command=self.browse_path).pack(
+        self.browse_path_btn = ttk.Button(path_frame, text="Обзор", command=self.browse_path)
+        self.browse_path_btn.pack(
             side=tk.LEFT, padx=5
         )
 

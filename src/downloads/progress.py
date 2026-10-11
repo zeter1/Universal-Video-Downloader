@@ -103,23 +103,32 @@ class DownloadProgressMixin:
 
 
     def finish_download(self) -> None:
-        self.root.after(0, self._finish_download_ui)
+        if self._completion_closed:
+            return
+        elapsed = (time.time() - self.download_start_time
+                   if self.download_start_time else 0)
+        # Worker не вызывает Tk, включая root.after(). Очередь читает главный поток.
+        self._completion_queue.put((getattr(self, "download_outcome", "failed"), elapsed))
 
 
-    def _finish_download_ui(self) -> None:
+    def _finish_download_ui(self, outcome=None, elapsed=None) -> None:
         self.is_downloading = False
+        self.set_save_path_controls_enabled(True)
         self.download_btn.config(state=tk.NORMAL)
         self.cancel_btn.config(state=tk.DISABLED)
         try:
             self.main_progress_frame.grid_remove()
         except Exception:
             pass
-        elapsed = (time.time() - self.download_start_time
-                   if self.download_start_time else 0)
-        outcome = getattr(self, "download_outcome", "failed")
+        if elapsed is None:
+            elapsed = (time.time() - self.download_start_time
+                       if self.download_start_time else 0)
+        if outcome is None:
+            outcome = getattr(self, "download_outcome", "failed")
         message, level = {
             "completed": ("✅ Завершено", "SUCCESS"),
             "cancelled": ("🛑 Загрузка отменена", "WARNING"),
             "failed": ("❌ Завершено с ошибками; подробности в логе", "ERROR"),
         }.get(outcome, ("⚠️ Сессия завершена без подтверждённого результата", "WARNING"))
         self.log(f"{message}. Время: {self.format_duration(elapsed)}", level)
+        self.show_completion_notification(outcome, elapsed)

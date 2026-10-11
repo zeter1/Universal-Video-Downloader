@@ -284,6 +284,7 @@ class DownloadManagerMixin:
         self.current_session_download_count = 0
 
         self.is_downloading = True
+        self.set_save_path_controls_enabled(False)
         self.cancel_flag.clear()
         try:
             self.max_concurrent = max(1, min(self.concurrent_var.get(), MAX_CONCURRENT_DL))

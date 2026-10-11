@@ -31,6 +31,7 @@ from src.audio.convert import AudioConvertMixin
 from src.audio.merge import AudioMergeMixin
 from src.audio.split import AudioSplitMixin
 from src.ui.window import WindowLifecycleMixin
+from src.ui.completion_notification import CompletionNotificationMixin
 from src.ui.clipboard import ClipboardMixin
 from src.ui.settings_controls import SettingsControlsMixin
 from src.ui.dependency_dialog import DependencyDialogMixin
@@ -78,6 +79,7 @@ class VideoDownloader(
     AudioMergeMixin,
     AudioSplitMixin,
     WindowLifecycleMixin,
+    CompletionNotificationMixin,
     ClipboardMixin,
     SettingsControlsMixin,
     DependencyDialogMixin,
@@ -118,6 +120,7 @@ class VideoDownloader(
         self.load_download_log()
         self.check_dependencies()
         self.setup_ui()
+        self.initialize_completion_notifications()
         self.initialize_problem_diagnostics()
 
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)

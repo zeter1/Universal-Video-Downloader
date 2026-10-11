@@ -58,3 +58,10 @@ python -m unittest discover -s tests
 
 Точечные тесты указаны самим `scripts/codex_scope.py`.
 Полный индекс методов генерируется: `python scripts/generate_code_index.py`.
+
+
+### Уведомления о завершении
+- `src/ui/completion_notification.py` — очередь завершений worker → главный поток Tk,
+  уведомления поверх окон, открытие папки, их позиционирование и закрытие.
+- `src/downloads/progress.py` — передаёт завершение в очередь и восстанавливает UI.
+- `src/ui/settings_controls.py` и `src/ui/layout.py` — блокировка пути сохранения на время задачи.

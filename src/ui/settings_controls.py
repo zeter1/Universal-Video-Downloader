@@ -68,9 +68,16 @@ class SettingsControlsMixin:
 
 
     def browse_path(self) -> None:
+        if self.is_downloading:
+            return
         path = filedialog.askdirectory()
-        if path:
+        if path and not self.is_downloading:
             self.save_path.set(path)
+
+    def set_save_path_controls_enabled(self, enabled: bool) -> None:
+        state = tk.NORMAL if enabled else tk.DISABLED
+        self.save_path_entry.config(state=state)
+        self.browse_path_btn.config(state=state)
 
 
     def log_retention_status(self) -> None:
