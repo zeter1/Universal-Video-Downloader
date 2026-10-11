@@ -76,8 +76,11 @@ class SettingsControlsMixin:
 
     def set_save_path_controls_enabled(self, enabled: bool) -> None:
         state = tk.NORMAL if enabled else tk.DISABLED
-        self.save_path_entry.config(state=state)
-        self.browse_path_btn.config(state=state)
+        # Во время раннего завершения задачи интерфейс мог создаться не полностью.
+        for widget in (getattr(self, "save_path_entry", None),
+                       getattr(self, "browse_path_btn", None)):
+            if widget is not None:
+                widget.config(state=state)
 
 
     def log_retention_status(self) -> None:

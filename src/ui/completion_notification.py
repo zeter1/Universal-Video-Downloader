@@ -55,7 +55,7 @@ class CompletionNotificationMixin:
         self._completion_windows.clear()
 
     def show_completion_notification(self, outcome: str, elapsed: float) -> None:
-        if self._completion_closed:
+        if getattr(self, "_completion_closed", True):
             return
         title, message, color = {
             "completed": ("Готово", "Скачивание и конвертация завершены.", "#7de2a3"),
