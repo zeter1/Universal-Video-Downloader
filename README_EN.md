@@ -146,3 +146,19 @@ Support for individual sites depends on `yt-dlp` and may change when sites updat
 ## License
 
 The source code is published as a portfolio project and for implementation review. Use of third-party services and downloading content must comply with the relevant site's terms and applicable law.
+
+## Developer contacts
+
+**Язык / Language:** [Русский](README.md#контакты-для-связи-с-разработчиком) · **English**
+
+- [zeter11@gmail.com](mailto:zeter11@gmail.com)
+- [https://t.me/zeter1](https://t.me/zeter1)
+- [https://www.linkedin.com/in/zeter/](https://www.linkedin.com/in/zeter/)
+- [https://www.facebook.com/zeter1](https://www.facebook.com/zeter1)
+- [https://vk.ru/zeter1](https://vk.ru/zeter1)
+- [https://www.instagram.com/zeter1992/](https://www.instagram.com/zeter1992/)
+- [https://tenchat.ru/zeter](https://tenchat.ru/zeter)
+- [https://x.com/zeter1](https://x.com/zeter1)
+- [https://www.threads.com/@zeter1992](https://www.threads.com/@zeter1992)
+- [https://ok.ru/zeter1](https://ok.ru/zeter1)
+- [https://t.me/zeterchat](https://t.me/zeterchat) — Telegram group: about me, projects and chat
