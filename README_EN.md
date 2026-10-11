@@ -6,6 +6,18 @@
 
 The project tries to avoid unnecessary transcoding. It first selects suitable MP4/M4A streams, uses fast lossless remuxing when needed, and falls back to H.264/AAC transcoding only when a compatible MP4 cannot be produced more directly.
 
+## Download and run on Windows
+
+> Windows builds are marked **Prerelease**: they are preliminary builds for testing. A release build may differ from the current source.
+
+1. Open [GitHub Releases](https://github.com/zeter1/Universal-Video-Downloader/releases) and expand **Assets** for the build you choose.
+2. Download and run `Universal-Video-Downloader.exe`.
+3. Paste a video URL, choose video or MP3, and select an output folder.
+
+Python, `yt-dlp`, FFmpeg/ffprobe, and Deno are included in the EXE. Internet access is required; individual sites depend on their restrictions and `yt-dlp` support. A SHA-256 file is published beside the binary. Offline and packaged self-tests do not establish live website availability.
+
+> The EXE is not commercially code-signed; Windows SmartScreen may warn about a new or rarely downloaded file.
+
 ## What the project demonstrates
 
 - integration of `yt-dlp`, FFmpeg, and ffprobe into one user workflow;
@@ -29,7 +41,7 @@ The project tries to avoid unnecessary transcoding. It first selects suitable MP
 - diagnostic logs;
 - tools that help Codex navigate the codebase efficiently.
 
-## Installation
+## Installation from source
 
 1. Install a current Python version for Windows.
 2. Install FFmpeg and ffprobe and add them to the system `PATH`.
@@ -46,7 +58,7 @@ cd Universal-Video-Downloader
 python -m pip install -r requirements.txt
 ```
 
-## Launch
+## Launch from source
 
 ```powershell
 python video_downloader.py
