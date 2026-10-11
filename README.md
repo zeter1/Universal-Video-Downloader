@@ -142,3 +142,9 @@ python -m unittest discover -s tests -v
 ## Лицензия
 
 Исходный код опубликован для портфолио и ознакомления с реализацией проекта. Использование сторонних сервисов и загрузка контента должны соответствовать правилам соответствующих сайтов и применимому законодательству.
+
+## Контакты для связи с разработчиком
+
+- [zeter11@gmail.com](mailto:zeter11@gmail.com)
+- [https://t.me/zeter1](https://t.me/zeter1)
+- [https://www.linkedin.com/in/zeter/](https://www.linkedin.com/in/zeter/)
