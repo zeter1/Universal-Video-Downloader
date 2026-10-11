@@ -5,7 +5,7 @@ loading Tkinter, diagnostics, subprocess helpers, or feature logic.
 """
 
 MAX_LOG_LINES        = 1000
-APP_VERSION          = "6.2 MP4 OUTPUT + 1080P PRIORITY"
+APP_VERSION          = "6.3 MP4 OUTPUT + 1080P PRIORITY"
 MAX_VIDEOS_PER_LIST  = 1000
 MAX_CONCURRENT_DL    = 2
 MAX_SPLIT_HOURS      = 10
